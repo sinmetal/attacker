@@ -1,15 +1,21 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
+	"os"
 	"sync"
 	"time"
 
 	"cloud.google.com/go/compute/metadata"
+	"contrib.go.opencensus.io/exporter/stackdriver"
 	"github.com/google/uuid"
+	"go.opencensus.io/trace"
 )
+
+var ds *Datastore
 
 func main() {
 	var projectID string
@@ -20,13 +26,36 @@ func main() {
 		}
 		projectID = p
 	}
+	p := os.Getenv("GOOGLE_CLOUD_PROJECT")
+	fmt.Printf("Env GOOGLE_CLOUD_PROJECT:%s\n", p)
+	if len(p) > 0 {
+		projectID = p
+	}
 
 	fmt.Printf("ProjectID is %s\n", projectID)
+
+	{
+		exporter, err := stackdriver.NewExporter(stackdriver.Options{
+			ProjectID: projectID,
+		})
+		if err != nil {
+			panic(err)
+		}
+		trace.RegisterExporter(exporter)
+	}
+
+	{
+		var err error
+		ds, err = NewDatastore(projectID)
+		if err != nil {
+			panic(err)
+		}
+	}
 
 	run(sample)
 }
 
-func run(f func() error) {
+func run(f func(i int, j int, k float64) error) {
 	var wg sync.WaitGroup
 	// 5min * i の時間回る
 	for i := 0; i < 10; i++ {
@@ -44,8 +73,8 @@ func run(f func() error) {
 					case <-t.C:
 						defer wg.Done()
 						fmt.Printf("Start %d,%d,%f\n", i, j, k)
-						if err := f(); err != nil {
-							fmt.Printf("Faile %d,%d,%f\n", i, j, k)
+						if err := runDatastore(i, j, k); err != nil {
+							fmt.Printf("Faile %d,%d,%f : %+v\n", i, j, k, err)
 						}
 					}
 
@@ -59,9 +88,14 @@ func run(f func() error) {
 	wg.Wait()
 }
 
-func sample() error {
+func sample(i int, j int, k float64) error {
 	id := uuid.New().String()
 	fmt.Printf("UUID is %s\n", id)
 
 	return nil
+}
+
+func runDatastore(i int, j int, k float64) error {
+	ctx := context.Background()
+	return ds.PutHeavyEntity(ctx, i, j, k)
 }
